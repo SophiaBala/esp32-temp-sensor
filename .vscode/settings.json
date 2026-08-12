@@ -14,5 +14,6 @@
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\sofa\\esp32-temp-sensor\\build"
-  ]
+  ],
+  "idf.flashType": "UART"
 }
