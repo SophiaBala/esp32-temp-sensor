@@ -5,8 +5,46 @@
 #include "esp_rom_sys.h"
 #include "esp_log.h"
 
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
+
 #define ONEWIRE_GPIO 4
 static const char *TAG = "onewire";
+
+static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+    }
+}
+
+static void wifi_init(void)
+{
+    nvs_flash_init();
+    esp_netif_init();
+    esp_event_loop_create_default();
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL);
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = "TP-Link_4D66",
+            .password = "19897462",
+        },
+    };
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    esp_wifi_start();
+}
 
 static bool on_presence(void){
     gpio_set_direction(ONEWIRE_GPIO, GPIO_MODE_OUTPUT);
@@ -52,7 +90,7 @@ static void write_byte(uint8_t byte){
 
 static uint8_t read_byte(void){
     uint8_t byte = 0;
-    for (int i=0; i <= 8; i++){
+    for (int i=0; i < 8; i++){
         byte |= (read_bit()<<i);
     }
     return byte;
@@ -68,7 +106,7 @@ static bool read_ds18b20(float *final_temperature){
     write_byte(0xCC);
     write_byte(0x44);
 
-    vTaskDelay(pdMS_TO_TICKS(700));
+    vTaskDelay(pdMS_TO_TICKS(750));
 
     if(on_presence() == false){
         return false;
@@ -91,6 +129,9 @@ static bool read_ds18b20(float *final_temperature){
 
 void app_main(void)
 {
+    wifi_init();
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
     gpio_reset_pin(ONEWIRE_GPIO);
     gpio_set_pull_mode(ONEWIRE_GPIO, GPIO_PULLUP_ONLY);
 
