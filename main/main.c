@@ -9,8 +9,15 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 
+#include "mqtt_client.h"
+#include "esp_crt_bundle.h"
+
 #define ONEWIRE_GPIO 4
+#define MQTT_TOPIC "home/room1/temperature"
 static const char *TAG = "onewire";
+
+static esp_mqtt_client_handle_t s_client;
+static bool s_mqtt_connected = false;
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -45,6 +52,34 @@ static void wifi_init(void)
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     esp_wifi_start();
 }
+
+
+static void mqtt_event_handler(void *args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
+    if (event_id == MQTT_EVENT_CONNECTED) {
+        ESP_LOGI(TAG, "MQTT connected");
+        s_mqtt_connected = true;
+    } else if (event_id == MQTT_EVENT_DISCONNECTED) {
+        ESP_LOGW(TAG, "MQTT disconnected");
+        s_mqtt_connected = false;
+    } else if (event_id == MQTT_EVENT_ERROR) {
+        ESP_LOGE(TAG, "MQTT error event");
+    }
+}
+
+static void mqtt_start(void)
+{
+    esp_mqtt_client_config_t mqtt_cfg = {
+        .broker.address.uri = "mqtts://a2cfd35a8afb4bac94e98a0d29efa1e0.s1.eu.hivemq.cloud:8883",
+        .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+        .credentials.username = "esp32_temp_sensor",
+        .credentials.authentication.password = "qwertyui",
+    };
+    s_client = esp_mqtt_client_init(&mqtt_cfg);
+    esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_start(s_client);
+}
+
 
 static bool on_presence(void){
     gpio_set_direction(ONEWIRE_GPIO, GPIO_MODE_OUTPUT);
@@ -132,6 +167,9 @@ void app_main(void)
     wifi_init();
     vTaskDelay(pdMS_TO_TICKS(3000));
 
+    mqtt_start();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
     gpio_reset_pin(ONEWIRE_GPIO);
     gpio_set_pull_mode(ONEWIRE_GPIO, GPIO_PULLUP_ONLY);
 
@@ -139,6 +177,16 @@ void app_main(void)
         float t;
         if (read_ds18b20(&t)) {
             ESP_LOGI(TAG, "Temperature: %.2f C", t);
+
+            if (s_mqtt_connected) {
+                char payload[16];
+                snprintf(payload, sizeof(payload), "%.2f", t);
+                esp_mqtt_client_publish(s_client, MQTT_TOPIC, payload, 0, 1, 0);
+                ESP_LOGI(TAG, "Published: %s", payload);
+            } else {
+                ESP_LOGW(TAG, "MQTT not connected, skip publish");
+            }
+
         } else {
             ESP_LOGW(TAG, "failed");
         }
